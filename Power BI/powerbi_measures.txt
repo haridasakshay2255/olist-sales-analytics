@@ -1,0 +1,167 @@
+OLIST E-COMMERCE DASHBOARD - POWER BI MODEL DOCUMENTATION
+============================================================
+Source: MySQL database olist_db (views: sales_detail, orders_clean,
+reviews_clean, payments_clean). Connection mode: Import.
+
+RELATIONSHIPS
+-------------
+orders_clean[order_id]   1 -> *  sales_detail[order_id]     (cross-filter: Both)
+orders_clean[order_id]   1 -> *  payments_clean[order_id]   (cross-filter: Single)
+reviews_clean[order_id]  1 -> 1  orders_clean[order_id]     (cross-filter: Both)
+DateTable[Date]          1 -> *  sales_detail[order_date]   (cross-filter: Single)
+
+
+CALCULATED TABLES
+-----------------
+DateTable =
+ADDCOLUMNS(
+    CALENDAR(DATE(2017,1,1), DATE(2018,8,31)),
+    "Year", YEAR([Date]),
+    "Month No", MONTH([Date]),
+    "Month", FORMAT([Date], "mmm"),
+    "Year-Month", FORMAT([Date], "yyyy-mm")
+)
+
+Order Stages =
+DATATABLE(
+    "Stage", STRING,
+    "Step", INTEGER,
+    {
+        {"1 Ordered", 1},
+        {"2 Approved", 2},
+        {"3 Shipped", 3},
+        {"4 Delivered", 4}
+    }
+)
+
+
+CALCULATED COLUMNS (table: sales_detail)
+----------------------------------------
+Customer State Name =
+SWITCH(
+    sales_detail[customer_state],
+    "AC", "Acre", "AL", "Alagoas", "AP", "Amapá", "AM", "Amazonas",
+    "BA", "Bahia", "CE", "Ceará", "DF", "Distrito Federal",
+    "ES", "Espírito Santo", "GO", "Goiás", "MA", "Maranhão",
+    "MT", "Mato Grosso", "MS", "Mato Grosso do Sul", "MG", "Minas Gerais",
+    "PA", "Pará", "PB", "Paraíba", "PR", "Paraná", "PE", "Pernambuco",
+    "PI", "Piauí", "RJ", "Rio de Janeiro", "RN", "Rio Grande do Norte",
+    "RS", "Rio Grande do Sul", "RO", "Rondônia", "RR", "Roraima",
+    "SC", "Santa Catarina", "SP", "São Paulo", "SE", "Sergipe",
+    "TO", "Tocantins",
+    "Unknown"
+)
+
+Seller State Name =
+SWITCH(
+    sales_detail[seller_state],
+    "AC", "Acre", "AL", "Alagoas", "AP", "Amapá", "AM", "Amazonas",
+    "BA", "Bahia", "CE", "Ceará", "DF", "Distrito Federal",
+    "ES", "Espírito Santo", "GO", "Goiás", "MA", "Maranhão",
+    "MT", "Mato Grosso", "MS", "Mato Grosso do Sul", "MG", "Minas Gerais",
+    "PA", "Pará", "PB", "Paraíba", "PR", "Paraná", "PE", "Pernambuco",
+    "PI", "Piauí", "RJ", "Rio de Janeiro", "RN", "Rio Grande do Norte",
+    "RS", "Rio Grande do Sul", "RO", "Rondônia", "RR", "Roraima",
+    "SC", "Santa Catarina", "SP", "São Paulo", "SE", "Sergipe",
+    "TO", "Tocantins",
+    "Unknown"
+)
+
+Delivery Status =
+SWITCH(
+    TRUE(),
+    ISBLANK(sales_detail[days_vs_estimate]), "Not delivered",
+    sales_detail[days_vs_estimate] > 0, "Late",
+    "On time / early"
+)
+
+Review Score = RELATED(reviews_clean[review_score])
+
+
+MEASURES (table: Measures)
+--------------------------
+Total Revenue =
+CALCULATE(SUM(sales_detail[price]), sales_detail[order_status] = "delivered")
+
+Total Orders =
+CALCULATE(DISTINCTCOUNT(sales_detail[order_id]), sales_detail[order_status] = "delivered")
+
+Avg Order Value = DIVIDE([Total Revenue], [Total Orders])
+
+Total Freight =
+CALCULATE(SUM(sales_detail[freight_value]), sales_detail[order_status] = "delivered")
+
+Total Customers =
+CALCULATE(DISTINCTCOUNT(sales_detail[customer_unique_id]), sales_detail[order_status] = "delivered")
+
+Items Sold =
+CALCULATE(COUNTROWS(sales_detail), sales_detail[order_status] = "delivered")
+
+Avg Delivery Days =
+CALCULATE(AVERAGE(sales_detail[delivery_days]), sales_detail[order_status] = "delivered")
+
+Avg Days vs Estimate =
+CALCULATE(AVERAGE(sales_detail[days_vs_estimate]), sales_detail[order_status] = "delivered")
+
+Late Delivery % =
+VAR Late =
+    CALCULATE(
+        DISTINCTCOUNT(sales_detail[order_id]),
+        sales_detail[order_status] = "delivered",
+        sales_detail[days_vs_estimate] > 0
+    )
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT(sales_detail[order_id]),
+        sales_detail[order_status] = "delivered",
+        NOT ISBLANK(sales_detail[days_vs_estimate])
+    )
+RETURN DIVIDE(Late, Total)
+
+Avg Review Score = AVERAGE(reviews_clean[review_score])
+
+Revenue Last Month =
+CALCULATE([Total Revenue], DATEADD(DateTable[Date], -1, MONTH))
+
+MoM Growth % =
+DIVIDE([Total Revenue] - [Revenue Last Month], [Revenue Last Month])
+
+Revenue YTD =
+TOTALYTD([Total Revenue], DateTable[Date])
+
+Total Payment Value = SUM(payments_clean[payment_value])
+
+Avg Installments = AVERAGE(payments_clean[payment_installments])
+
+Cancel Rate =
+DIVIDE(
+    CALCULATE(DISTINCTCOUNT(sales_detail[order_id]), sales_detail[order_status] = "canceled"),
+    DISTINCTCOUNT(sales_detail[order_id])
+)
+
+Repeat Customers =
+COUNTROWS(
+    FILTER(
+        VALUES(sales_detail[customer_unique_id]),
+        CALCULATE(
+            DISTINCTCOUNT(sales_detail[order_id]),
+            sales_detail[order_status] = "delivered"
+        ) > 1
+    )
+)
+
+Repeat Customer % = DIVIDE([Repeat Customers], [Total Customers])
+
+Freight % of Revenue = DIVIDE([Total Freight], [Total Revenue])
+
+Funnel Orders =
+SWITCH(
+    SELECTEDVALUE('Order Stages'[Step]),
+    1, DISTINCTCOUNT(orders_clean[order_id]),
+    2, CALCULATE(DISTINCTCOUNT(orders_clean[order_id]),
+        NOT ISBLANK(orders_clean[order_approved_at])),
+    3, CALCULATE(DISTINCTCOUNT(orders_clean[order_id]),
+        NOT ISBLANK(orders_clean[order_delivered_carrier_date])),
+    4, CALCULATE(DISTINCTCOUNT(orders_clean[order_id]),
+        NOT ISBLANK(orders_clean[order_delivered_customer_date]))
+)
